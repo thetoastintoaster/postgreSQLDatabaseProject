@@ -1,0 +1,89 @@
+
+CREATE TABLE rented_movies (
+	film_id INT PRIMARY KEY,
+	movie_title VARCHAR(75),
+	description VARCHAR (150),
+	category_name VARCHAR(35),
+	release_year INT,
+	age_rating VARCHAR(10),
+	last_update VARCHAR(30),
+	rent_count INT
+);
+
+CREATE VIEW summary_rented_movies AS
+SELECT
+	film_id AS filmID, 
+	movie_title AS Title,
+	release_year AS releaseYear, 
+	category_name AS Genre, 
+	age_rating AS Rating,
+	rent_count AS rentCount
+FROM rented_movies;
+
+CREATE OR REPLACE FUNCTION simplifyTimeStamp()
+	RETURNS VOID
+	LANGUAGE PLPGSQL
+AS $$
+BEGIN
+UPDATE rented_movies
+SET last_update = SUBSTRING(last_update, 1, 10) 
+WHERE film_id >= 1;
+END;
+$$;
+	
+CREATE OR REPLACE FUNCTION add_summary_trigger()
+	RETURNS TRIGGER
+	LANGUAGE PLPGSQL
+AS
+$$
+BEGIN
+  IF (SELECT COUNT(*) FROM rented_movies WHERE film_id = NEW.film_id) = 0 THEN
+    INSERT INTO summary_rented_movies
+	(film_id, movie_title, category_name, release_year, age_rating, last_update, rent_count) 
+	VALUES (NEW.film_id, NEW.movie_title, NEW.category_name, NEW.release_year, NEW.age_rating, NEW.last_update, NEW.rent_count);
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS add_summary_trigger on rented_movies;
+
+CREATE TRIGGER movie_summary_trigger
+	AFTER INSERT
+	ON "rented_movies"
+	FOR EACH ROW
+	WHEN (pg_trigger_depth() < 10)
+EXECUTE PROCEDURE add_summary_trigger();
+
+INSERT INTO rented_movies
+(film_id, movie_title, description, category_name, release_year, age_rating, last_update, rent_count)
+SELECT film.film_id, film.title, film.description, category.name, film.release_year, film.rating, film.last_update, count(rental.rental_id)
+FROM category
+INNER JOIN film_category on category.category_id = film_category.category_id
+INNER JOIN film on film_category.film_id = film.film_id
+INNER JOIN inventory on film.film_id=inventory.film_id
+INNER JOIN rental on inventory.inventory_id = rental.inventory_id
+
+GROUP BY 1,2,3,4
+ORDER BY film_id ASC;
+
+CREATE OR REPLACE PROCEDURE refresh_movie_tables()
+LANGUAGE PLPGSQL
+AS $$
+BEGIN
+	TRUNCATE TABLE rented_movies;
+	DELETE FROM summary_rented_movies WHERE summary_rented_movies.filmID > 0;
+	INSERT INTO rented_movies
+	(film_id, movie_title, description, category_name, release_year, age_rating, last_update, rent_count)
+	SELECT film.film_id, film.title, film.description, category.name, film.release_year, film.rating, film.last_update, count(rental.rental_id)
+	FROM category
+	INNER JOIN film_category on category.category_id = film_category.category_id
+	INNER JOIN film on film_category.film_id = film.film_id
+	INNER JOIN inventory on film.film_id=inventory.film_id
+	INNER JOIN rental on inventory.inventory_id = rental.inventory_id
+	GROUP BY 1,2,3,4
+	ORDER BY film_id ASC;
+END;
+$$;
+
+SELECT * FROM rented_movies ORDER BY film_id ASC;     
